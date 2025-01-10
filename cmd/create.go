@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"embed"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,20 +16,10 @@ type TemplateData struct {
 	BasePath string
 }
 
-//go:embed templates/*
-var templates embed.FS
-
 func createFileFromTemplate(filePath, templatePath string, data TemplateData) error {
 	updatedPath := strings.ReplaceAll(templatePath, basePath+"/", "")
-
-	// Baca file template dari embed
-	content, err := templates.ReadFile(updatedPath)
-	if err != nil {
-		return fmt.Errorf("failed to read template: %w", err)
-	}
-
-	// Parse template dari string
-	tmpl, err := template.New(filepath.Base(templatePath)).Parse(string(content))
+	// Parse template dari file
+	tmpl, err := template.ParseFiles(updatedPath)
 	if err != nil {
 		return fmt.Errorf("failed to parse template: %w", err)
 	}
@@ -118,7 +107,7 @@ func initializeGoMod(basePath string) error {
 	}
 
 	// Jalankan perintah `go mod init`
-	cmd := exec.Command("go", "mod", "init", filepath.Base(basePath))
+	cmd := exec.Command("go", "mod", "init", basePath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	err = cmd.Run()
