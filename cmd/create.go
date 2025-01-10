@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"embed"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,10 +17,20 @@ type TemplateData struct {
 	BasePath string
 }
 
+//go:embed templates/*
+var templates embed.FS
+
 func createFileFromTemplate(filePath, templatePath string, data TemplateData) error {
 	updatedPath := strings.ReplaceAll(templatePath, basePath+"/", "")
-	// Parse template dari file
-	tmpl, err := template.ParseFiles(updatedPath)
+
+	// Baca file template dari embed
+	content, err := templates.ReadFile(updatedPath)
+	if err != nil {
+		return fmt.Errorf("failed to read template: %w", err)
+	}
+
+	// Parse template dari string
+	tmpl, err := template.New(filepath.Base(templatePath)).Parse(string(content))
 	if err != nil {
 		return fmt.Errorf("failed to parse template: %w", err)
 	}
@@ -44,12 +55,13 @@ func generateTemplatePath(currentPath, name string) string {
 	fileNameWithoutExt := fileName[:len(fileName)-len(filepath.Ext(fileName))]
 
 	// Tentukan folder template berdasarkan lokasi file
-	// Misalnya, jika file berada di internal/domain, maka cari template di templates/domain
 	dirName := filepath.Dir(currentPath)
 
-	// Gunakan strings.TrimPrefix untuk mendapatkan path relatif setelah "internal/"
+	// Path relatif dari `internal/` ke `cmd/templates/`
 	relativePath := strings.TrimPrefix(dirName, "internal/")
-	// Bangun path template dengan folder relatif
+	relativePath = filepath.ToSlash(relativePath) // Normalize path to forward slashes
+
+	// Gabungkan path template
 	templatePath := filepath.Join("cmd/templates", relativePath, fileNameWithoutExt+".tmpl")
 	return templatePath
 }
@@ -58,38 +70,34 @@ func createFolderStructure(pathFolder string, structure map[string]interface{}) 
 	for name, content := range structure {
 		currentPath := filepath.Join(pathFolder, name)
 		switch content := content.(type) {
-		case nil: // Create a file
-			// Ensure parent directory exists
+		case nil: // File kosong
+			// Buat direktori induk jika belum ada
 			if err := os.MkdirAll(filepath.Dir(currentPath), os.ModePerm); err != nil {
 				return fmt.Errorf("failed to create directory for file %s: %w", currentPath, err)
 			}
-			// Create the file
+			// Buat file kosong
 			if _, err := os.Create(currentPath); err != nil {
 				return fmt.Errorf("failed to create file %s: %w", currentPath, err)
 			}
 		case string:
 			if content == "template" {
-				// Jika konten adalah "template", gunakan template untuk membuat file
+				// Gunakan template untuk membuat file
 				templatePath := generateTemplatePath(currentPath, name)
-				if err := createFileFromTemplate(currentPath, templatePath, TemplateData{basePath}); err != nil {
+				if err := createFileFromTemplate(currentPath, templatePath, TemplateData{BasePath: basePath}); err != nil {
 					return err
 				}
 			} else {
-				// Jika konten adalah nil, buat file kosong
-				if err := os.MkdirAll(filepath.Dir(currentPath), os.ModePerm); err != nil {
-					return fmt.Errorf("failed to create directory for file %s: %w", currentPath, err)
-				}
 				// Buat file kosong
 				if err := os.WriteFile(currentPath, []byte{}, 0644); err != nil {
 					return fmt.Errorf("failed to create file %s: %w", currentPath, err)
 				}
 			}
-		case map[string]interface{}: // Create a folder
-			// Create the folder
+		case map[string]interface{}: // Folder
+			// Buat folder
 			if err := os.MkdirAll(currentPath, os.ModePerm); err != nil {
 				return fmt.Errorf("failed to create folder %s: %w", currentPath, err)
 			}
-			// Recursively process substructure
+			// Rekursif untuk substruktur
 			if err := createFolderStructure(currentPath, content); err != nil {
 				return err
 			}
@@ -101,6 +109,7 @@ func createFolderStructure(pathFolder string, structure map[string]interface{}) 
 	return nil
 }
 
+// Inisialisasi Go module di basePath
 func initializeGoMod(basePath string) error {
 	// Navigasi ke basePath
 	err := os.Chdir(basePath)
@@ -109,7 +118,7 @@ func initializeGoMod(basePath string) error {
 	}
 
 	// Jalankan perintah `go mod init`
-	cmd := exec.Command("go", "mod", "init", basePath) // Ganti dengan path modul Anda
+	cmd := exec.Command("go", "mod", "init", filepath.Base(basePath))
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	err = cmd.Run()
@@ -123,9 +132,8 @@ func initializeGoMod(basePath string) error {
 func init() {
 	rootCmd.AddCommand(createCmd)
 
-	// Add flags comand
+	// Add flags command
 	createCmd.Flags().StringVarP(&basePath, "path", "p", "./new-project", "Base path for the project")
-	fmt.Println("Creating folder structure...")
 }
 
 var basePath string
@@ -135,16 +143,17 @@ var createCmd = &cobra.Command{
 	Long:  "Algo is a CLI tool that allows you to focus on the actual Go code, and not the project structure. Perfect for someone new to the Go language",
 
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Ensure the base path exists
+		// Pastikan base path ada
 		if err := os.MkdirAll(basePath, os.ModePerm); err != nil {
 			return fmt.Errorf("failed to create base directory %s: %w", basePath, err)
 		}
 
-		// Create the folder structure
+		// Buat struktur folder
 		if err := createFolderStructure(basePath, flags.Structure); err != nil {
 			return err
 		}
 
+		// Inisialisasi go.mod
 		if err := initializeGoMod(basePath); err != nil {
 			return fmt.Errorf("error initializing go.mod: %v", err)
 		}
